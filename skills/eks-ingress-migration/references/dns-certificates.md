@@ -20,6 +20,8 @@ Assess DNS automation and TLS certificate management for Gateway API migration.
 2. Check container args for `--source=` values
 3. Check ServiceAccount for IRSA annotation
 
+> **Post-cutover cleanup (do not leave this to chance).** external-dns tracks each record it owns with a companion **TXT ownership record**. When the old Ingress/controller goes away, delete the stale **A/CNAME *and* its TXT** record — otherwise external-dns keeps trying to reconcile a load balancer that no longer exists, and a future record for the same hostname can be refused because ownership still resolves to the retired source. Also **sequence the sources**: while both `ingress` and `gateway-httproute` are enabled for the same hostname during a cutover, two sources claim one record and it can flap. Migrate the source list deliberately rather than enabling both indefinitely.
+
 **Critical:** external-dns must be configured with `--source=gateway-httproute` (and optionally `--source=gateway-grpcroute`) to auto-manage DNS for Gateway API resources. If only `--source=ingress` is set, DNS won't work after migration.
 
 **Impact (per Impact Indicator):**

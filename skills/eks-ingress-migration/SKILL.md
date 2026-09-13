@@ -205,7 +205,7 @@ An assessment of an unhealthy cluster is misleading. Verify, read-only:
 ```
 aws eks describe-cluster --name <cluster> --query 'cluster.computeConfig' --output json
 ```
-Auto Mode is enabled when `computeConfig.enabled = true`. On Auto Mode, recognize the **managed** load-balancing IngressClass `eks.amazonaws.com/alb` (parameters `apiGroup: eks.amazonaws.com`, `kind: IngressClassParams`) and `loadBalancerClass: eks.amazonaws.com/nlb` — these are built-in, not a self-managed AWS LB Controller. Record Auto Mode status in Current Configuration; it changes Migration Options guidance (ALB path needs no LBC install).
+Auto Mode is enabled when `computeConfig.enabled = true`. On Auto Mode, recognize the **managed** load-balancing IngressClass `eks.amazonaws.com/alb` (parameters `apiGroup: eks.amazonaws.com`, `kind: IngressClassParams`) and `loadBalancerClass: eks.amazonaws.com/nlb` — these are built-in, not a self-managed AWS LB Controller. Record Auto Mode status in Current Configuration; it changes Migration Options guidance (ALB path needs no LBC install). **But Auto Mode is not annotation-for-annotation equivalent to a self-managed LBC** — AWS documents a subset as "Not supported", including `alb.ingress.kubernetes.io/auth-type: oidc`, `group.name` (IngressClass-only), the `waf-acl-id`/`web-acl-id` family, and `dry-run-plan`; `ListenerAttribute` cannot be set at all (which removes the static-CORS response-header workaround). So "no LBC install needed" must not be reported as "same capabilities": check each annotation the estate relies on against the [Auto Mode annotation table](https://docs.aws.amazon.com/eks/latest/userguide/auto-configure-alb.html) and flag any gap as a finding.
 
 ### Steps 1–7: Run Assessment (per cluster)
 

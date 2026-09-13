@@ -38,6 +38,8 @@ references/atx/td_ingress-nginx-lbc/summaries.md
 references/atx/td_ingress-nginx-lbc/document_references/navigating-nginx-ingress-retirement.md
 ```
 
+> ⚠️ **Verify the current AWS Transform custom-definition workflow before quoting these steps to a customer.** AWS Transform's custom transformation-definition tooling (how a definition is authored, packaged and published, and what directory shape it expects) has changed since these steps were written, and the bundle under `references/atx/` is included here as **reference content for the mapping logic** — it is not guaranteed to be publish-ready as-is for the current tooling. Treat the step sequence below as illustrative, confirm the authoritative flow in the current AWS Transform documentation, and say in the report that the ATX path needs an AWS-side confirmation of the present onboarding/publish process rather than presenting these steps as current.
+
 ### Step 2: Upload TD to ATX Workspace
 
 Load the TD into your ATX workspace. The TD contains:
@@ -73,7 +75,7 @@ Then merge the changes.
 >
 > **2. The rewrite regex is over-escaped and never matches.** The TD emits `"regex": "^\\\\/something\\\\/(.*)$"` inside a YAML `|` block scalar and instructs "escape forward slashes as `\\\\/`". A block scalar performs **no** unescaping, so JSON receives four backslashes and decodes them to **two** — the regex then requires a literal backslash before each slash and matches no real request path. **The rewrite silently never fires** and traffic reaches the backend with the original path. The correct escaping is `\\/` in the block scalar (JSON-decoding to `\/`), which is what the AWS blog **in the same bundle** and this skill's own `references/samples/alb/*` both use — so the TD contradicts its own source. Fix ATX output by deleting one level of escaping.
 >
-> **3. `proxy-read-timeout` / `proxy-send-timeout` are mapped to the wrong attribute.** The TD maps them to `target-group-attributes` `deregistration_delay.timeout_seconds`. That attribute controls how long a **deregistering** target keeps draining connections — it has nothing to do with how long the load balancer waits for a backend response. The behavioural analogue is the ALB **idle timeout** (`alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds`), and note it is **load-balancer-wide**, not per-service, so per-route NGINX timeouts cannot be reproduced exactly — record any divergence as a finding rather than assuming parity.
+> **3. `proxy-read-timeout` / `proxy-send-timeout` lead with the wrong attribute.** The TD offers them as `target-group-attributes` with **`deregistration_delay.timeout_seconds` _or_ ALB idle timeout settings** — quoted exactly, it does list the correct analogue as an alternative, but `deregistration_delay` comes first and is the one a reader is most likely to take. That attribute controls how long a **deregistering** target keeps draining connections — it has nothing to do with how long the load balancer waits for a backend response. The behavioural analogue is the ALB **idle timeout** (`alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds`), and note it is **load-balancer-wide**, not per-service, so per-route NGINX timeouts cannot be reproduced exactly — record any divergence as a finding rather than assuming parity.
 
 ## What the TD Converts (10 Steps)
 
@@ -121,13 +123,14 @@ See `references/samples/nginx/` (input) and `references/samples/alb/` (ATX outpu
 
 Once ATX has transformed your manifests:
 
-1. Ensure AWS Load Balancer Controller is installed on a currently supported release (**v2.14.1+** is required for the `transforms` URI rewrites this TD emits) — or use EKS Auto Mode's built-in `eks.amazonaws.com/alb`
+1. Ensure AWS Load Balancer Controller is installed on a currently supported release (**v2.14.1+** is required for the `transforms` URI rewrites this TD emits). **Do not assume EKS Auto Mode's built-in `eks.amazonaws.com/alb` is a drop-in substitute here:** Auto Mode supports only a documented *subset* of the `alb.ingress.kubernetes.io/*` annotations (`auth-type: oidc`, `group.name`, the `waf-acl-id`/`web-acl-id` family and `dry-run-plan` are all listed "Not supported", and `ListenerAttribute` cannot be set at all), and AWS does not currently document `transforms` support for Auto Mode either way. If the target is Auto Mode, verify each annotation the TD emits against the [Auto Mode annotation table](https://docs.aws.amazon.com/eks/latest/userguide/auto-configure-alb.html) before applying, and report anything unverified as such rather than assuming parity.
 2. Verify ACM certificates are provisioned and in ISSUED state
 3. `kubectl apply --dry-run=client -f <migrated-file>` to validate
 4. Deploy to staging first
-5. Use DNS weighted routing to shift traffic from old CLB to new ALB
-6. Remove NGINX Ingress Controller after validation
-7. Clean up orphaned TLS Secrets
+5. **Publish the transformed manifests as new, renamed Ingress objects — do not let the in-place `ingressClassName` flip be the cutover.** The TD rewrites `ingressClassName` on the existing object; applied as-is that is an **all-or-nothing** switch with nothing to weight (see `alb-migration.md` Phase 3). Rename the migrated objects so the `nginx` originals stay live, then use DNS weighted routing at a low TTL to shift traffic; rollback = move the weight back. If a parallel object is impossible, plan and state a low-TTL all-or-nothing cutover with a maintenance window — never describe it as weighted.
+6. Verify the ALB directly (targets healthy, `Host:` header against the ALB DNS name) before any DNS change
+7. **OPERATOR** — retire the NGINX Ingress Controller only after validation, and retire it by **uninstalling the release** (`helm uninstall <release> -n <ns>`), never by deleting only the Deployment. Enumerate and remove the survivors: the `ingress-nginx-admission` **ValidatingWebhookConfiguration** (`failurePolicy: Fail`, no selectors — left orphaned it makes the API server reject **every** Ingress create/update cluster-wide, including re-applying these migrated ALB Ingresses), its **admission Service**, the controller's own **IngressClass**, and the controller **LoadBalancer Service** (whose CLB/NLB, security groups and DNS records otherwise linger). Non-Helm installs: delete each of those explicitly. See `alb-migration.md` Phase 4.
+8. Clean up orphaned TLS Secrets — **check first whether cert-manager will re-issue them**; deleting a Secret that a live `Certificate` still owns triggers re-issuance and can hit rate limits
 
 ## Report Integration
 
