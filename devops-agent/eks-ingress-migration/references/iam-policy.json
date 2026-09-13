@@ -33,6 +33,15 @@
       "Resource": "*"
     },
     {
+      "Sid": "CloudWatchReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "ACMReadAccess",
       "Effect": "Allow",
       "Action": [

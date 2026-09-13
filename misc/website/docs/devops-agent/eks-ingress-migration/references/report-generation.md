@@ -13,8 +13,8 @@ This page is generated from [devops-agent/eks-ingress-migration/references/repor
 
 ## Purpose
 
-Generate dual-format assessment report matching the 5-section navigation structure:
-**Overview → Assessment Summary → Routing Topology → Migration Approach → Analysis**
+Generate dual-format assessment report matching the 6-section navigation structure:
+**Overview → Assessment Summary → Routing Topology → Migration Approach → Analysis → References**
 
 This is an **assessment report** — present findings and options, do not prescribe a single migration path.
 
@@ -64,6 +64,8 @@ Two design rules from operator feedback drive this version:
 ### 1.3 — Map each finding to a scoring category
 
 Every finding belongs to exactly one category. Categories are weighted by a **max deduction cap** — the cap is how much that dimension can drag down "ease of migration".
+
+> **What this score is (and is not).** The category caps, Impact bands and the 0–100 mapping are a **hand-tuned heuristic** for making one estate comparable with another and for showing the reader *why* a number came out where it did. They are **not** an empirically validated or calibrated model, and the number is **not** a manday/cost estimate. Two estates with the same score can differ materially in real effort. What is deterministic is the **arithmetic** — the same findings always produce the same score — not the weighting itself.
 
 **0-effort routes (count, never deduct):** an Ingress/route already served by the **AWS Load Balancer Controller (ALB)**, **Gateway API**, or a **maintained 3rd-party controller that supports the NGINX feature set** is "done". It appears in the inventory denominator at **0 pts** and is **excluded** from the Scale/Volume work-count. Do not deduct for routes that need no migration.
 
@@ -132,7 +134,7 @@ score = max(0, score)
 # separate badge next to the score. The score already reflects their effort via the
 # Tier-A / TLS / cross-namespace deductions — do NOT also cap the number.
 gate = 0
-gate += count(production routes using a Tier-A no-workaround feature: Lua/snippet/mirror/regex-capture, INCLUDING a Tier-B feature escalated to Tier-A — e.g. CORS on a closed/unmodifiable backend, or Basic-Auth→OIDC with non-interactive clients on a closed/unmodifiable backend)
+gate += count(routes using a Tier-A no-workaround feature: Lua/snippet/mirror/regex-capture, INCLUDING a Tier-B feature escalated to Tier-A — e.g. CORS on a closed/unmodifiable backend, or Basic-Auth→OIDC with non-interactive clients on a closed/unmodifiable backend)
 gate += count(routes needing TLS passthrough OR mTLS client-cert with no faithful target)
 gate += count(cross-namespace / shared-LB routes not expressible without ownership changes)
 gate += 1 if a revenue-critical hostname cutover has no rollback path (single hostname, no weighted/blue-green)
@@ -249,6 +251,7 @@ The report is rendered **inline in the response**, as one markdown document per 
 12. **Manifests go in Export Materials, rendered inline.** Do not print long target/current config inside a finding or an option panel — state the change in words and point the reader to the **Export Materials** section, where the YAML is rendered in full (Step 6).
 13. **In-page anchor links:** write `[blocker](#blockers)` to link to a section; it resolves against this report's own headings. Use this wherever the text says "see Blockers".
 14. **Impact everywhere, by the rubric:** Assessment Summary, Ingress Discovery, Routing Topology, Traffic & Routing, Blockers, Recommendations, Ingress Resource Analysis, DNS & Certificates Analysis, Migration Risk all use the **Impact 0–5** scale (🟢0 / 🟡1-2 / 🟠3-4 / 🔴5) — never GREEN/AMBER/RED. Every score MUST be justified against the **Impact Indicator** rubric (priority order: business/revenue · security/reputation · effort — and effort never sets severity), not ad-hoc judgement. Note: easy-to-deploy prerequisites (e.g. installing CRDs) are LOW even if they block a path.
+15. **State the ingress-nginx retirement as fact whenever an ingress-nginx controller is found.** The Overview/Executive Summary baseline must say, in the past tense and dated, that the upstream project was **archived on 2026-03-24** and that **no version receives security patches any more** (see `ingress-discovery.md` §1.4 "Retirement status"). Never frame the migration as optional upkeep or imply a patched/current ingress-nginx release exists. This is a standing finding even when the controller is healthy and fully up to date, and it is why Controller Currency cannot score clean for a running ingress-nginx (the §1.4 minimum-🟠 3 floor).
 
 ### Report Template (follow EXACTLY)
 
@@ -296,7 +299,7 @@ The report is rendered **inline in the response**, as one markdown document per 
 
 ## Executive Summary
 
-> Write for a non-technical / low-tech reader — one glance must answer "how risky is this and why." Lead with the biggest impact. **Bold** the key noun in each bullet; wrap the most damaging facts in `** **` so they render red. Split any bullet that lists multiple items into indented sub-bullets.
+> Write for a non-technical / low-tech reader — one glance must answer "how risky is this and why." Lead with the biggest impact. **Bold** the key noun in each bullet, and use bold for the most damaging facts so they stand out. (This port renders **bold**, not colour — do not promise the reader a red highlight; the upstream Claude Code build's renderer is what colourises.) Split any bullet that lists multiple items into indented sub-bullets.
 
 - **Ingress controllers:** [N] in use — **[the single biggest risk, e.g. one is End-of-Life with known CVEs]**
   - [Controller A] `vX` (modern)
@@ -496,9 +499,12 @@ Stay on the Ingress API but swap NGINX annotations for ALB annotations. Gets you
 | 1 | Install AWS LB Controller on a currently supported release — **v2.14.1+** if any route needs a `transforms` URI rewrite; not needed on EKS Auto Mode | `kubectl get deploy -n kube-system aws-load-balancer-controller` |
 | 2 | Provision ACM certificates | `aws acm list-certificates` — all ISSUED |
 | 3 | Convert annotations per mapping above | `kubectl apply --dry-run=client -f <file>` |
-| 4 | Deploy migrated Ingress (new ALB created) | `kubectl get ingress -A` shows ALB address |
-| 5 | DNS weighted routing: shift traffic CLB→ALB | `dig <host>` resolves to new ALB |
-| 6 | Remove NGINX controller + orphaned TLS Secrets | `kubectl delete deploy -n ingress-nginx ingress-nginx-controller` |
+| 4 | Deploy the migrated Ingress as a **new object with a new name** (e.g. `web-alb`), leaving the original `nginx` Ingress untouched and serving — do **not** flip `ingressClassName` in place | `kubectl get ingress -A` shows the new object with an ALB address |
+| 5 | Verify the ALB directly (target groups healthy, `Host:` header against the ALB DNS name) **before any DNS change** | ALB DNS name serves the app correctly |
+| 6 | DNS weighted routing: shift traffic CLB→ALB at a low TTL; rollback = move the weight back | `dig <host>` resolves to new ALB |
+| 7 | **OPERATOR** — remove the NGINX controller by **uninstalling its release** (`helm uninstall <release> -n <ns>`), never by deleting only the Deployment (see the admission-webhook warning above), then remove orphaned TLS Secrets | `helm list -n ingress-nginx` empty; no surviving `ingress-nginx-admission` VWC |
+
+> ⚠️ An **in-place** `ingressClassName` flip is an all-or-nothing cutover — the moment the class changes there is no period where both paths are live, so there is nothing to weight and no rollback but editing it back. If a parallel object is genuinely impossible (GitOps one-Ingress-per-host, admission policy blocking duplicate hosts), say so plainly and plan a **low-TTL all-or-nothing cutover with a maintenance window** — do not present it as weighted or zero-downtime. See `alb-migration.md` Phase 3.
 
 #### Per-Ingress Conversion Table
 
@@ -506,7 +512,7 @@ Stay on the Ingress API but swap NGINX annotations for ALB annotations. Gets you
 |---------|-----------|-------------|-----------|
 | [name] | [ns] | [e.g., "rewrite→transforms, TLS→ACM"] | [Low/Medium/High] |
 
-> **Manifests exported to:** `<cluster>-manifests/target/alb/`
+> **Generated manifests:** see the **Export Materials** section.
 
 ---
 

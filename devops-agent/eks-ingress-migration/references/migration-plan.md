@@ -18,7 +18,7 @@ Generate a concrete, phased migration plan from Ingress to Gateway API based on 
 
    | Controller line | Standard CRDs | Notes |
    |---|---|---|
-   | v3.4.0 (the tag the `lbc-migrate` CLI is built from) | **v1.5.0** | L4 routes still need the experimental channel |
+   | v3.4.0 (the tag the `lbc-migrate` CLI is built from) | **v1.5.0** | TLSRoute is standard from v1.5.0; **TCPRoute/UDPRoute** still need the experimental channel on this pairing |
    | **v3.5.0** (the recommended target) | **v1.6.0** | LBC v3.5.0 is built for Gateway API v1.6.0; TCPRoute/UDPRoute are in the standard channel from v1.6.0, so no experimental install is needed for L4 |
 
    ```
@@ -138,7 +138,11 @@ Example: `HTTPRoute/nginx-app-route: parentRef=main-gateway, hostnames=[app.exam
 1. Confirm all traffic flowing through Gateway API
 2. Delete old Ingress resources
 3. Remove the old ingress controller (nginx, etc.) if no longer needed — **`helm uninstall` the release, never `kubectl delete deploy` alone.** The ingress-nginx chart also owns an `ingress-nginx-admission` ValidatingWebhookConfiguration (`failurePolicy: Fail`, no selectors); if the Deployment goes and the webhook stays, its Service has no endpoints and the API server rejects **every** Ingress create/update in the cluster — including re-applying the migrated resources and any GitOps reconcile. For a non-Helm install, delete the admission `ValidatingWebhookConfiguration` and its Service explicitly.
-4. Update IaC/GitOps to manage HTTPRoute resources instead of Ingress
+4. Remove the retired controller's **IngressClass** and its **`LoadBalancer` Service** — deleting the workload alone leaves the old CLB/NLB, its security groups and any DNS records still live and billable
+5. Retire stale DNS records (including **external-dns** ownership **TXT** records, not just the A/CNAME entries)
+6. Update IaC/GitOps to manage HTTPRoute resources instead of Ingress
+> **Enumerate the survivors before declaring cleanup done.** Uninstalling the release (or deleting the Deployment on a non-Helm install) leaves these behind, and each is a real orphan with cost or blast radius: the controller's own **`LoadBalancer` Service** (and therefore its **CLB/NLB, security groups and any DNS records still pointing at it**), the **`ingress-nginx-admission` ValidatingWebhookConfiguration** and its **admission Service**, the controller's **IngressClass**, and any **external-dns TXT/A records** it owned. On a non-Helm install every one of these must be deleted explicitly. Verify with: no `ingress-nginx` Service of type `LoadBalancer` remains, `kubectl get validatingwebhookconfigurations` shows no ingress-nginx entry, and the old load balancer is gone from `elbv2 describe-load-balancers`.
+
 
 ## Checks to Execute
 
